@@ -1,6 +1,6 @@
 // @flow strict
 
-import { isAsyncIterable } from 'iterall';
+import { SYMBOL_ASYNC_ITERATOR } from '../polyfills/symbols';
 
 import inspect from '../jsutils/inspect';
 import { addPath, pathToArray } from '../jsutils/Path';
@@ -143,20 +143,20 @@ function subscribeImpl(
   // the GraphQL specification. The `execute` function provides the
   // "ExecuteSubscriptionEvent" algorithm, as it is nearly identical to the
   // "ExecuteQuery" algorithm, for which `execute` is also used.
-  const mapSourceToResponse = payload =>
-    execute(
+  const mapSourceToResponse = (payload) =>
+    execute({
       schema,
       document,
-      payload,
+      rootValue: payload,
       contextValue,
       variableValues,
       operationName,
       fieldResolver,
-    );
+    });
 
   // Resolve the Source Stream, then map every source value to a
   // ExecutionResult value as described above.
-  return sourcePromise.then(resultOrStream =>
+  return sourcePromise.then((resultOrStream) =>
     // Note: Flow can't refine isAsyncIterable, so explicit casts are used.
     isAsyncIterable(resultOrStream)
       ? mapAsyncIterator(
@@ -251,7 +251,7 @@ export function createSourceEventStream(
 
     // Call the `subscribe()` resolver or the default resolver to produce an
     // AsyncIterable yielding raw payloads.
-    const resolveFn = fieldDef.subscribe || exeContext.fieldResolver;
+    const resolveFn = fieldDef.subscribe ?? exeContext.fieldResolver;
 
     const path = addPath(undefined, responseName);
 
@@ -270,7 +270,7 @@ export function createSourceEventStream(
     );
 
     // Coerce to Promise for easier error handling and consistent return type.
-    return Promise.resolve(result).then(eventStream => {
+    return Promise.resolve(result).then((eventStream) => {
       // If eventStream is an Error, rethrow a located error.
       if (eventStream instanceof Error) {
         return {
@@ -283,9 +283,10 @@ export function createSourceEventStream(
         // Note: isAsyncIterable above ensures this will be correct.
         return ((eventStream: any): AsyncIterable<mixed>);
       }
+
       throw new Error(
-        'Subscription field must return Async Iterable. Received: ' +
-          inspect(eventStream),
+        'Subscription field must return Async Iterable. ' +
+          `Received: ${inspect(eventStream)}.`,
       );
     });
   } catch (error) {
@@ -296,4 +297,16 @@ export function createSourceEventStream(
       ? Promise.resolve({ errors: [error] })
       : Promise.reject(error);
   }
+}
+
+/**
+ * Returns true if the provided object implements the AsyncIterator protocol via
+ * either implementing a `Symbol.asyncIterator` or `"@@asyncIterator"` method.
+ */
+function isAsyncIterable(maybeAsyncIterable: mixed): boolean {
+  if (maybeAsyncIterable == null || typeof maybeAsyncIterable !== 'object') {
+    return false;
+  }
+
+  return typeof maybeAsyncIterable[SYMBOL_ASYNC_ITERATOR] === 'function';
 }

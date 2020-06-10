@@ -11,7 +11,7 @@ import {
   type IntrospectionQuery,
   type IntrospectionOptions,
   getIntrospectionQuery,
-} from './introspectionQuery';
+} from './getIntrospectionQuery';
 
 /**
  * Build an IntrospectionQuery from a GraphQLSchema
@@ -26,8 +26,14 @@ export function introspectionFromSchema(
   schema: GraphQLSchema,
   options?: IntrospectionOptions,
 ): IntrospectionQuery {
-  const queryAST = parse(getIntrospectionQuery(options));
-  const result = execute(schema, queryAST);
+  const optionsWithDefaults = {
+    directiveIsRepeatable: true,
+    schemaDescription: true,
+    ...options,
+  };
+
+  const document = parse(getIntrospectionQuery(optionsWithDefaults));
+  const result = execute({ schema, document });
   invariant(!isPromise(result) && !result.errors && result.data);
   return (result.data: any);
 }

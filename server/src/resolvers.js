@@ -14,7 +14,28 @@ module.exports = {
 
     Mission: {
         missionPatch: (mission, { size } = { size: 'LARGE' }) => {
-            
-        }
-    }
+            return size === 'SMALL'
+            ? mission.missionPatchSmall
+            : mission.missionPatchLarge;
+        },
+    },
+
+    Launch: {
+        isBooked: async (launch, _, { dataSources }) =>
+            dataSources.userAPI.isBookedOnLaunch({ launchId: launch.id }),
+    },
+
+    User: {
+        trips: async (_, __, { dataSources }) => {
+            //get ids of the launch by user
+            const launchIds = await dataSources.userAPI.getLaunchIdsByUser();
+            if (!launchIds.length) return [];
+            //looking up launch by Ids
+            return (
+                dataSources.launchAPI.getLaunchByIds({
+                    launchIds,
+                }) || []
+            );
+        },
+    },
 };

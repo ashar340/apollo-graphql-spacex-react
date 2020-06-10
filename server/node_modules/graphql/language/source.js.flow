@@ -1,7 +1,8 @@
 // @flow strict
 
+import { SYMBOL_TO_STRING_TAG } from '../polyfills/symbols';
+
 import devAssert from '../jsutils/devAssert';
-import defineToStringTag from '../jsutils/defineToStringTag';
 
 type Location = {|
   line: number,
@@ -21,20 +22,26 @@ export class Source {
   name: string;
   locationOffset: Location;
 
-  constructor(body: string, name?: string, locationOffset?: Location): void {
+  constructor(
+    body: string,
+    name: string = 'GraphQL request',
+    locationOffset: Location = { line: 1, column: 1 },
+  ): void {
     this.body = body;
-    this.name = name || 'GraphQL request';
-    this.locationOffset = locationOffset || { line: 1, column: 1 };
+    this.name = name;
+    this.locationOffset = locationOffset;
     devAssert(
       this.locationOffset.line > 0,
-      'line in locationOffset is 1-indexed and must be positive',
+      'line in locationOffset is 1-indexed and must be positive.',
     );
     devAssert(
       this.locationOffset.column > 0,
-      'column in locationOffset is 1-indexed and must be positive',
+      'column in locationOffset is 1-indexed and must be positive.',
     );
   }
-}
 
-// Conditionally apply `[Symbol.toStringTag]` if `Symbol`s are supported
-defineToStringTag(Source);
+  // $FlowFixMe Flow doesn't support computed properties yet
+  get [SYMBOL_TO_STRING_TAG]() {
+    return 'Source';
+  }
+}

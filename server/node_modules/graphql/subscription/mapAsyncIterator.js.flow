@@ -1,6 +1,6 @@
 // @flow strict
 
-import { $$asyncIterator, getAsyncIterator } from 'iterall';
+import { SYMBOL_ASYNC_ITERATOR } from '../polyfills/symbols';
 
 import { type PromiseOrValue } from '../jsutils/PromiseOrValue';
 
@@ -10,16 +10,17 @@ import { type PromiseOrValue } from '../jsutils/PromiseOrValue';
  */
 export default function mapAsyncIterator<T, U>(
   iterable: AsyncIterable<T>,
-  callback: T => PromiseOrValue<U>,
-  rejectCallback?: any => PromiseOrValue<U>,
+  callback: (T) => PromiseOrValue<U>,
+  rejectCallback?: (any) => PromiseOrValue<U>,
 ): AsyncGenerator<U, void, void> {
-  const iterator = getAsyncIterator(iterable);
-  let $return;
+  // $FlowFixMe
+  const iteratorMethod = iterable[SYMBOL_ASYNC_ITERATOR];
+  const iterator: any = iteratorMethod.call(iterable);
+  let $return: any;
   let abruptClose;
-  // $FlowFixMe(>=0.68.0)
   if (typeof iterator.return === 'function') {
     $return = iterator.return;
-    abruptClose = error => {
+    abruptClose = (error) => {
       const rethrow = () => Promise.reject(error);
       return $return.call(iterator).then(rethrow, rethrow);
     };
@@ -35,7 +36,7 @@ export default function mapAsyncIterator<T, U>(
   if (rejectCallback) {
     // Capture rejectCallback to ensure it cannot be null.
     const reject = rejectCallback;
-    mapReject = error =>
+    mapReject = (error) =>
       asyncMapValue(error, reject).then(iteratorResult, abruptClose);
   }
 
@@ -51,13 +52,12 @@ export default function mapAsyncIterator<T, U>(
         : Promise.resolve({ value: undefined, done: true });
     },
     throw(error) {
-      // $FlowFixMe(>=0.68.0)
       if (typeof iterator.throw === 'function') {
         return iterator.throw(error).then(mapResult, mapReject);
       }
       return Promise.reject(error).catch(abruptClose);
     },
-    [$$asyncIterator]() {
+    [SYMBOL_ASYNC_ITERATOR]() {
       return this;
     },
   }: any);
@@ -65,9 +65,9 @@ export default function mapAsyncIterator<T, U>(
 
 function asyncMapValue<T, U>(
   value: T,
-  callback: T => PromiseOrValue<U>,
+  callback: (T) => PromiseOrValue<U>,
 ): Promise<U> {
-  return new Promise(resolve => resolve(callback(value)));
+  return new Promise((resolve) => resolve(callback(value)));
 }
 
 function iteratorResult<T>(value: T): IteratorResult<T, void> {

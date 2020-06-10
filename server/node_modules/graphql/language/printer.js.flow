@@ -14,12 +14,12 @@ export function print(ast: ASTNode): string {
 
 // TODO: provide better type coverage in future
 const printDocASTReducer: any = {
-  Name: node => node.value,
-  Variable: node => '$' + node.name,
+  Name: (node) => node.value,
+  Variable: (node) => '$' + node.name,
 
   // Document
 
-  Document: node => join(node.definitions, '\n\n') + '\n',
+  Document: (node) => join(node.definitions, '\n\n') + '\n',
 
   OperationDefinition(node) {
     const op = node.operation;
@@ -106,8 +106,9 @@ const printDocASTReducer: any = {
 
   // Type System Definitions
 
-  SchemaDefinition: ({ directives, operationTypes }) =>
+  SchemaDefinition: addDescription(({ directives, operationTypes }) =>
     join(['schema', join(directives, ' '), block(operationTypes)], ' '),
+  ),
 
   OperationTypeDefinition: ({ operation, type }) => operation + ': ' + type,
 
@@ -148,8 +149,18 @@ const printDocASTReducer: any = {
       ),
   ),
 
-  InterfaceTypeDefinition: addDescription(({ name, directives, fields }) =>
-    join(['interface', name, join(directives, ' '), block(fields)], ' '),
+  InterfaceTypeDefinition: addDescription(
+    ({ name, interfaces, directives, fields }) =>
+      join(
+        [
+          'interface',
+          name,
+          wrap('implements ', join(interfaces, ' & ')),
+          join(directives, ' '),
+          block(fields),
+        ],
+        ' ',
+      ),
   ),
 
   UnionTypeDefinition: addDescription(({ name, directives, types }) =>
@@ -206,8 +217,17 @@ const printDocASTReducer: any = {
       ' ',
     ),
 
-  InterfaceTypeExtension: ({ name, directives, fields }) =>
-    join(['extend interface', name, join(directives, ' '), block(fields)], ' '),
+  InterfaceTypeExtension: ({ name, interfaces, directives, fields }) =>
+    join(
+      [
+        'extend interface',
+        name,
+        wrap('implements ', join(interfaces, ' & ')),
+        join(directives, ' '),
+        block(fields),
+      ],
+      ' ',
+    ),
 
   UnionTypeExtension: ({ name, directives, types }) =>
     join(
@@ -228,15 +248,15 @@ const printDocASTReducer: any = {
 };
 
 function addDescription(cb) {
-  return node => join([node.description, cb(node)], '\n');
+  return (node) => join([node.description, cb(node)], '\n');
 }
 
 /**
  * Given maybeArray, print an empty string if it is null or empty, otherwise
  * print all items together separated by separator if provided
  */
-function join(maybeArray, separator) {
-  return maybeArray ? maybeArray.filter(x => x).join(separator || '') : '';
+function join(maybeArray: ?Array<string>, separator = '') {
+  return maybeArray?.filter((x) => x).join(separator) ?? '';
 }
 
 /**
@@ -253,8 +273,8 @@ function block(array) {
  * If maybeString is not null or empty, then wrap with start and end, otherwise
  * print an empty string.
  */
-function wrap(start, maybeString, end) {
-  return maybeString ? start + maybeString + (end || '') : '';
+function wrap(start, maybeString, end = '') {
+  return maybeString ? start + maybeString + end : '';
 }
 
 function indent(maybeString) {

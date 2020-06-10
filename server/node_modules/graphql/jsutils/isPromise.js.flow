@@ -9,5 +9,5 @@ declare function isPromise(value: mixed): boolean %checks(value instanceof
 
 // eslint-disable-next-line no-redeclare
 export default function isPromise(value) {
-  return Boolean(value && typeof value.then === 'function');
+  return typeof value?.then === 'function';
 }

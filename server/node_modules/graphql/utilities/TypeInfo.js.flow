@@ -3,7 +3,13 @@
 import find from '../polyfills/find';
 
 import { Kind } from '../language/kinds';
-import { type ASTNode, type FieldNode } from '../language/ast';
+import { type Visitor, getVisitFn } from '../language/visitor';
+import {
+  type ASTNode,
+  type ASTKindToNode,
+  type FieldNode,
+  isNode,
+} from '../language/ast';
 
 import { type GraphQLSchema } from '../type/schema';
 import { type GraphQLDirective } from '../type/directives';
@@ -55,7 +61,7 @@ export class TypeInfo {
   constructor(
     schema: GraphQLSchema,
     // NOTE: this experimental optional second parameter is only needed in order
-    // to support non-spec-compliant codebases. You should never need to use it.
+    // to support non-spec-compliant code bases. You should never need to use it.
     // It may disappear in the future.
     getFieldDefFn?: typeof getFieldDef,
     // Initial type may be provided in rare cases to facilitate traversals
@@ -71,7 +77,7 @@ export class TypeInfo {
     this._directive = null;
     this._argument = null;
     this._enumValue = null;
-    this._getFieldDef = getFieldDefFn || getFieldDef;
+    this._getFieldDef = getFieldDefFn ?? getFieldDef;
     if (initialType) {
       if (isInputType(initialType)) {
         this._inputTypeStack.push(initialType);
@@ -166,12 +172,16 @@ export class TypeInfo {
         break;
       case Kind.OPERATION_DEFINITION: {
         let type: mixed;
-        if (node.operation === 'query') {
-          type = schema.getQueryType();
-        } else if (node.operation === 'mutation') {
-          type = schema.getMutationType();
-        } else if (node.operation === 'subscription') {
-          type = schema.getSubscriptionType();
+        switch (node.operation) {
+          case 'query':
+            type = schema.getQueryType();
+            break;
+          case 'mutation':
+            type = schema.getMutationType();
+            break;
+          case 'subscription':
+            type = schema.getSubscriptionType();
+            break;
         }
         this._typeStack.push(isObjectType(type) ? type : undefined);
         break;
@@ -195,11 +205,11 @@ export class TypeInfo {
       case Kind.ARGUMENT: {
         let argDef;
         let argType: mixed;
-        const fieldOrDirective = this.getDirective() || this.getFieldDef();
+        const fieldOrDirective = this.getDirective() ?? this.getFieldDef();
         if (fieldOrDirective) {
           argDef = find(
             fieldOrDirective.args,
-            arg => arg.name === node.name.value,
+            (arg) => arg.name === node.name.value,
           );
           if (argDef) {
             argType = argDef.type;
@@ -313,4 +323,39 @@ function getFieldDef(
   if (isObjectType(parentType) || isInterfaceType(parentType)) {
     return parentType.getFields()[name];
   }
+}
+
+/**
+ * Creates a new visitor instance which maintains a provided TypeInfo instance
+ * along with visiting visitor.
+ */
+export function visitWithTypeInfo(
+  typeInfo: TypeInfo,
+  visitor: Visitor<ASTKindToNode>,
+): Visitor<ASTKindToNode> {
+  return {
+    enter(node) {
+      typeInfo.enter(node);
+      const fn = getVisitFn(visitor, node.kind, /* isLeaving */ false);
+      if (fn) {
+        const result = fn.apply(visitor, arguments);
+        if (result !== undefined) {
+          typeInfo.leave(node);
+          if (isNode(result)) {
+            typeInfo.enter(result);
+          }
+        }
+        return result;
+      }
+    },
+    leave(node) {
+      const fn = getVisitFn(visitor, node.kind, /* isLeaving */ true);
+      let result;
+      if (fn) {
+        result = fn.apply(visitor, arguments);
+      }
+      typeInfo.leave(node);
+      return result;
+    },
+  };
 }

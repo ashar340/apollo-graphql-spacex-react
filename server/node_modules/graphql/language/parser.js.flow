@@ -2,18 +2,17 @@
 
 import inspect from '../jsutils/inspect';
 import devAssert from '../jsutils/devAssert';
-import defineToJSON from '../jsutils/defineToJSON';
 
 import { syntaxError } from '../error/syntaxError';
 import { type GraphQLError } from '../error/GraphQLError';
 
 import { Kind } from './kinds';
 import { Source } from './source';
-import { type Lexer, createLexer } from './lexer';
 import { DirectiveLocation } from './directiveLocation';
 import { type TokenKindEnum, TokenKind } from './tokenKind';
+import { Lexer, isPunctuatorTokenKind } from './lexer';
 import {
-  type Location,
+  Location,
   type Token,
   type NameNode,
   type VariableNode,
@@ -63,7 +62,7 @@ import {
 /**
  * Configuration options to control parser behavior
  */
-export type ParseOptions = {
+export type ParseOptions = {|
   /**
    * By default, the parser creates AST nodes that know the location
    * in the source that they correspond to. This configuration flag
@@ -108,9 +107,7 @@ export type ParseOptions = {
    * future.
    */
   experimentalFragmentVariables?: boolean,
-
-  ...
-};
+|};
 
 /**
  * Given a GraphQL source, parses it into a Document.
@@ -167,18 +164,18 @@ export function parseType(
 }
 
 class Parser {
-  _options: ParseOptions;
-  _lexer: Lexer<void>;
+  _options: ?ParseOptions;
+  _lexer: Lexer;
 
   constructor(source: string | Source, options?: ParseOptions) {
     const sourceObj = typeof source === 'string' ? new Source(source) : source;
     devAssert(
       sourceObj instanceof Source,
-      `Must provide Source. Received: ${inspect(sourceObj)}`,
+      `Must provide Source. Received: ${inspect(sourceObj)}.`,
     );
 
-    this._lexer = createLexer(sourceObj);
-    this._options = options || {};
+    this._lexer = new Lexer(sourceObj);
+    this._options = options;
   }
 
   /**
@@ -481,7 +478,7 @@ class Parser {
     // Experimental support for defining variables within fragments changes
     // the grammar of FragmentDefinition:
     //   - fragment FragmentName VariableDefinitions? on TypeCondition Directives? SelectionSet
-    if (this._options.experimentalFragmentVariables) {
+    if (this._options?.experimentalFragmentVariables === true) {
       return {
         kind: Kind.FRAGMENT_DEFINITION,
         name: this.parseFragmentName(),
@@ -557,26 +554,21 @@ class Parser {
       case TokenKind.BLOCK_STRING:
         return this.parseStringLiteral();
       case TokenKind.NAME:
-        if (token.value === 'true' || token.value === 'false') {
-          this._lexer.advance();
-          return {
-            kind: Kind.BOOLEAN,
-            value: token.value === 'true',
-            loc: this.loc(token),
-          };
-        } else if (token.value === 'null') {
-          this._lexer.advance();
-          return {
-            kind: Kind.NULL,
-            loc: this.loc(token),
-          };
-        }
         this._lexer.advance();
-        return {
-          kind: Kind.ENUM,
-          value: ((token.value: any): string),
-          loc: this.loc(token),
-        };
+        switch (token.value) {
+          case 'true':
+            return { kind: Kind.BOOLEAN, value: true, loc: this.loc(token) };
+          case 'false':
+            return { kind: Kind.BOOLEAN, value: false, loc: this.loc(token) };
+          case 'null':
+            return { kind: Kind.NULL, loc: this.loc(token) };
+          default:
+            return {
+              kind: Kind.ENUM,
+              value: ((token.value: any): string),
+              loc: this.loc(token),
+            };
+        }
       case TokenKind.DOLLAR:
         if (!isConst) {
           return this.parseVariable();
@@ -775,10 +767,11 @@ class Parser {
   }
 
   /**
-   * SchemaDefinition : schema Directives[Const]? { OperationTypeDefinition+ }
+   * SchemaDefinition : Description? schema Directives[Const]? { OperationTypeDefinition+ }
    */
   parseSchemaDefinition(): SchemaDefinitionNode {
     const start = this._lexer.token;
+    const description = this.parseDescription();
     this.expectKeyword('schema');
     const directives = this.parseDirectives(true);
     const operationTypes = this.many(
@@ -788,6 +781,7 @@ class Parser {
     );
     return {
       kind: Kind.SCHEMA_DEFINITION,
+      description,
       directives,
       operationTypes,
       loc: this.loc(start),
@@ -867,7 +861,7 @@ class Parser {
       } while (
         this.expectOptionalToken(TokenKind.AMP) ||
         // Legacy support for the SDL?
-        (this._options.allowLegacySDLImplementsInterfaces &&
+        (this._options?.allowLegacySDLImplementsInterfaces === true &&
           this.peek(TokenKind.NAME))
       );
     }
@@ -880,7 +874,7 @@ class Parser {
   parseFieldsDefinition(): Array<FieldDefinitionNode> {
     // Legacy support for the SDL?
     if (
-      this._options.allowLegacySDLEmptyFields &&
+      this._options?.allowLegacySDLEmptyFields === true &&
       this.peek(TokenKind.BRACE_L) &&
       this._lexer.lookahead().kind === TokenKind.BRACE_R
     ) {
@@ -964,12 +958,14 @@ class Parser {
     const description = this.parseDescription();
     this.expectKeyword('interface');
     const name = this.parseName();
+    const interfaces = this.parseImplementsInterfaces();
     const directives = this.parseDirectives(true);
     const fields = this.parseFieldsDefinition();
     return {
       kind: Kind.INTERFACE_TYPE_DEFINITION,
       description,
       name,
+      interfaces,
       directives,
       fields,
       loc: this.loc(start),
@@ -1215,22 +1211,29 @@ class Parser {
 
   /**
    * InterfaceTypeExtension :
-   *   - extend interface Name Directives[Const]? FieldsDefinition
-   *   - extend interface Name Directives[Const]
+   *  - extend interface Name ImplementsInterfaces? Directives[Const]? FieldsDefinition
+   *  - extend interface Name ImplementsInterfaces? Directives[Const]
+   *  - extend interface Name ImplementsInterfaces
    */
   parseInterfaceTypeExtension(): InterfaceTypeExtensionNode {
     const start = this._lexer.token;
     this.expectKeyword('extend');
     this.expectKeyword('interface');
     const name = this.parseName();
+    const interfaces = this.parseImplementsInterfaces();
     const directives = this.parseDirectives(true);
     const fields = this.parseFieldsDefinition();
-    if (directives.length === 0 && fields.length === 0) {
+    if (
+      interfaces.length === 0 &&
+      directives.length === 0 &&
+      fields.length === 0
+    ) {
       throw this.unexpected();
     }
     return {
       kind: Kind.INTERFACE_TYPE_EXTENSION,
       name,
+      interfaces,
       directives,
       fields,
       loc: this.loc(start),
@@ -1392,8 +1395,12 @@ class Parser {
    * the source that created a given parsed object.
    */
   loc(startToken: Token): Location | void {
-    if (!this._options.noLocation) {
-      return new Loc(startToken, this._lexer.lastToken, this._lexer.source);
+    if (this._options?.noLocation !== true) {
+      return new Location(
+        startToken,
+        this._lexer.lastToken,
+        this._lexer.source,
+      );
     }
   }
 
@@ -1418,7 +1425,7 @@ class Parser {
     throw syntaxError(
       this._lexer.source,
       token.start,
-      `Expected ${kind}, found ${getTokenDesc(token)}`,
+      `Expected ${getTokenKindDesc(kind)}, found ${getTokenDesc(token)}.`,
     );
   }
 
@@ -1447,7 +1454,7 @@ class Parser {
       throw syntaxError(
         this._lexer.source,
         token.start,
-        `Expected "${value}", found ${getTokenDesc(token)}`,
+        `Expected "${value}", found ${getTokenDesc(token)}.`,
       );
     }
   }
@@ -1470,11 +1477,11 @@ class Parser {
    * is encountered.
    */
   unexpected(atToken?: ?Token): GraphQLError {
-    const token = atToken || this._lexer.token;
+    const token = atToken ?? this._lexer.token;
     return syntaxError(
       this._lexer.source,
       token.start,
-      `Unexpected ${getTokenDesc(token)}`,
+      `Unexpected ${getTokenDesc(token)}.`,
     );
   }
 
@@ -1539,23 +1546,17 @@ class Parser {
   }
 }
 
-function Loc(startToken: Token, endToken: Token, source: Source) {
-  this.start = startToken.start;
-  this.end = endToken.end;
-  this.startToken = startToken;
-  this.endToken = endToken;
-  this.source = source;
-}
-
-// Print a simplified form when appearing in JSON/util.inspect.
-defineToJSON(Loc, function() {
-  return { start: this.start, end: this.end };
-});
-
 /**
  * A helper function to describe a token as a string for debugging
  */
 function getTokenDesc(token: Token): string {
   const value = token.value;
-  return value ? `${token.kind} "${value}"` : token.kind;
+  return getTokenKindDesc(token.kind) + (value != null ? ` "${value}"` : '');
+}
+
+/**
+ * A helper function to describe a token kind as a string for debugging
+ */
+function getTokenKindDesc(kind: TokenKindEnum): string {
+  return isPunctuatorTokenKind(kind) ? `"${kind}"` : kind;
 }
