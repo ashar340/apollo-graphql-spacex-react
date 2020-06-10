@@ -35,11 +35,30 @@ enum PatchSize {
 
 #Used to Query (CLients)
 type Query {
-    launches: [Launch]!
+    launches(
+        """
+        The number of results to show. Must be >= 1. Default = 20
+        """
+        pageSize: Int
+        """
+        If we add a cursor here, it only would add results _after_ this cursor
+        """
+        after: String
+    ): LaunchConnection!
     launch(id: ID!): Launch
     me: User
 }
 
+"""
+Simple Wrapper around the list of launches containing a cursor to the last item in the list. Passing this cursor to the launches query to fetch results
+after these.
+"""
+
+type LaunchConnection {
+    cursor: String! #indicates current position in the data set
+    hasMore: Boolean! #indication if more data is there to fetch beyond launches
+    launches: [Launch]!
+}
 type Mutation {
     #This mutation would allow the logged-in user to book a trip for one/more of the launches
     bookTrips(launchIds: [ID]!): TripUpdateResponse!
