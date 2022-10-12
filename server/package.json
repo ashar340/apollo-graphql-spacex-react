@@ -13,7 +13,7 @@
   "dependencies": {
     "apollo-datasource": "^0.7.1",
     "apollo-datasource-rest": "^0.9.2",
-    "apollo-server": "2.14.3",
+    "apollo-server": "2.25.4",
     "apollo-server-testing": "2.14.3",
     "graphql": "^15.1.0",
     "isemail": "^3.2.0",
